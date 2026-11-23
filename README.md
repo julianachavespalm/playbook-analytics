@@ -202,6 +202,73 @@ Para garantir escalabilidade e eliminar gargalos de I/O de bancos relacionais le
 
 ---
 
+## Modelagem de Dados e Schema do Lakehouse
+
+### 1. Origem Relacional (Diagrama Entidade-Relacionamento)
+Os dados de origem estruturam-se em um modelo relacional normalizado contendo o histórico de partidas, ações lance a lance (*play-by-play*) e dados biográficos dos atletas:
+
+```mermaid
+erDiagram
+    GAME ||--o{ PLAY_BY_PLAY : "possui eventos (game_id)"
+    PLAYER ||--o{ PLAY_BY_PLAY : "executa acao (player1_id = id)"
+    COMMON_PLAYER_INFO ||--|| PLAYER : "metadados (person_id = id)"
+
+    GAME {
+        string game_id PK "ID único da partida"
+        string team_name_home "Franquia mandante"
+        string team_name_away "Franquia visitante"
+        int pts_home "Pontuação final mandante"
+        int pts_away "Pontuação final visitante"
+        int reb_home "Rebotes totais mandante"
+        int reb_away "Rebotes totais visitante"
+        int ast_home "Assistências mandante"
+        int ast_away "Assistências visitante"
+    }
+
+    PLAY_BY_PLAY {
+        string game_id FK "FK da partida"
+        int eventmsgtype "Código do evento (1 a 18)"
+        int player1_id FK "FK do atleta envolvido"
+        string score "Placar no instante do lance"
+    }
+
+    PLAYER {
+        int id PK "Identificador único do atleta"
+        string full_name "Nome completo"
+        int is_active "Status na liga (1=Ativo, 0=Inativo)"
+    }
+
+    COMMON_PLAYER_INFO {
+        int person_id PK "ID do atleta vinculado"
+        string display_first_last "Nome canônico de exibição"
+        date birthdate "Data de nascimento"
+    }
+```
+
+---
+
+### 2. Dicionário de Dados do Lakehouse & Feature Store (Parquet / DuckDB)
+O pipeline do `DataLoader` e da `FeatureStore` transforma o modelo relacional normalizado em um schema analítico colunar desnormalizado otimizado para inferência:
+
+| Campo | Tipo Físico | Camada | Descrição Semântica / Regra de Negócio |
+| :--- | :--- | :---: | :--- |
+| `game_id` | `VARCHAR(16)` | Lakehouse | Identificador único do confronto. |
+| `time_casa` | `VARCHAR(64)` | Lakehouse | Franquia mandante do confronto. |
+| `time_visitante` | `VARCHAR(64)` | Lakehouse | Franquia visitante do confronto. |
+| `pontos_casa` | `INTEGER` | Lakehouse | Pontos totais marcados pela equipe mandante ($X_1$). |
+| `pontos_visitante`| `INTEGER` | Lakehouse | Pontos totais marcados pela equipe visitante ($X_2$). |
+| `rebotes_casa` | `INTEGER` | Lakehouse | Volume de rebotes ofensivos e defensivos do mandante. |
+| `rebotes_visitante`| `INTEGER` | Lakehouse | Volume de rebotes ofensivos e defensivos do visitante. |
+| `assistencias_casa`| `INTEGER` | Lakehouse | Total de passes convertidos em cestas (mandante). |
+| `assistencias_visitante`| `INTEGER` | Lakehouse | Total de passes convertidos em cestas (visitante). |
+| `ano` | `INTEGER` | Partição | Ano da partida (utilizado para partição temporal). |
+| `vitoria_casa` | `BOOLEAN` | Feature Store | Target supervisionado binário (`pontos_casa > pontos_visitante`). |
+| `diferenca_pontos` | `INTEGER` | Feature Store | Diferencial contínuo (`pontos_casa - pontos_visitante`). |
+| `total_pontos` | `INTEGER` | Feature Store | Volume combinado do confronto (*Over/Under*). |
+| `categoria_atleta` | `VARCHAR(32)` | Feature Store | Régua normativa (*Elite*, *Alto*, *Médio*, *Regular*, *Base*). |
+
+---
+
 ## Contratos de Domínio Tipados (Pydantic v2)
 
 Toda a saída do pipeline é encapsulada em modelos com validação estrita em runtime:
